@@ -1,0 +1,3 @@
+*.db
+.ipynb_checkpoints/
+badge_assests/

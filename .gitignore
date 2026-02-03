@@ -1,3 +1,59 @@
-*.db
+# ===============================
+# Python
+# ===============================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 .ipynb_checkpoints/
-badge_assests/
+
+# ===============================
+# Airflow
+# ===============================
+airflow/logs/
+airflow/plugins/
+airflow/__pycache__/
+
+# Airflow local DB / metadata (if any)
+airflow/airflow.cfg
+airflow/airflow-webserver.pid
+airflow/airflow-scheduler.pid
+airflow/logs/
+airflow/__pycache__/
+airflow/webserver_config.py
+
+# ===============================
+# Docker
+# ===============================
+**/postgres-db-volume/
+**/pgdata/
+**/docker-data/
+**/docker-volumes/
+
+# ===============================
+# Environment / Secrets
+# ===============================
+.env
+.env.*
+!*.env.example
+
+# ===============================
+# OS / Editor
+# ===============================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===============================
+# Data outputs (generated)
+# ===============================
+*.csv
+*.parquet
+*.json
+
+# ===============================
+# Snapshots (raw data, large files)
+# ===============================
+snapshots/data/
+snapshots/output/
