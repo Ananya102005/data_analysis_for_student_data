@@ -1,5 +1,7 @@
 from airflow import DAG
 from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.sensors.external_task import ExternalTaskSensor
+from airflow.utils.state import DagRunState
 from datetime import datetime
 
 with DAG(
@@ -9,6 +11,20 @@ with DAG(
     catchup=True,
     tags=["fact", "attendance"]
 ) as dag:
+
+    # ------------------------------------------------------------
+    # Wait for SRC DAG (DAG-to-DAG dependency)
+    # ------------------------------------------------------------
+    wait_for_src_dag = ExternalTaskSensor(
+        task_id="wait_for_source_data_src_dag",
+        external_dag_id="source_data_src_dag",
+        external_task_id=None,          # wait for entire DAG
+        allowed_states=[DagRunState.SUCCESS],
+        failed_states=[DagRunState.FAILED],
+        mode="reschedule",
+        timeout=60 * 60 * 2,            # 2 hours
+        poke_interval=60,
+    )
 
     # ------------------------------------------------------------
     # Create FACT table
@@ -35,17 +51,17 @@ with DAG(
     )
 
     # ------------------------------------------------------------
-    # Populate FACT table (overnight-safe, session-aware)
+    # Populate FACT table 
     # ------------------------------------------------------------
     calculate_daily_attendance = PostgresOperator(
         task_id="calculate_daily_attendance",
         postgres_conn_id="postgres_default",
         sql="""
-        -- Idempotent reload for the day
+        -- Idempotent reload
         DELETE FROM fact_attendance_daily
         WHERE date_id = '{{ ds }}'::date;
 
-        WITH ordered_events AS (
+        WITH stage_data AS (
             SELECT
                 badge_id,
                 event_time,
@@ -59,66 +75,45 @@ with DAG(
                     ORDER BY event_time
                 ) AS next_event_type
             FROM src_badge_events
-            -- include previous day to capture overnight sessions
-            WHERE event_time >= '{{ ds }}'::date - INTERVAL '1 day'
-              AND event_time <  '{{ ds }}'::date + INTERVAL '1 day'
         ),
 
-        paired_sessions AS (
+        daily_calculation AS (
             SELECT
                 badge_id,
-                event_time AS in_time,
-                next_event_time AS out_time
-            FROM ordered_events
+                '{{ ds }}'::date AS date_id,
+
+                (
+                    CASE
+                        WHEN next_event_time > '{{ ds }}'::date + INTERVAL '1 day'
+                        THEN '{{ ds }}'::date + INTERVAL '1 day'
+                        ELSE next_event_time
+                    END
+                    -
+                    CASE
+                        WHEN event_time < '{{ ds }}'::date
+                        THEN '{{ ds }}'::date
+                        ELSE event_time
+                    END
+                ) AS session_duration,
+
+                CASE
+                    WHEN event_time < '{{ ds }}'::date
+                    THEN '{{ ds }}'::date
+                    ELSE event_time
+                END AS effective_in,
+
+                CASE
+                    WHEN next_event_time > '{{ ds }}'::date + INTERVAL '1 day'
+                    THEN '{{ ds }}'::date + INTERVAL '1 day'
+                    ELSE next_event_time
+                END AS effective_out
+
+            FROM stage_data
             WHERE event_type = 'IN'
               AND next_event_type = 'OUT'
               AND next_event_time IS NOT NULL
-        ),
-
-        expanded_days AS (
-            SELECT
-                badge_id,
-                generate_series(
-                    DATE(in_time),
-                    DATE(out_time),
-                    INTERVAL '1 day'
-                )::date AS date_id,
-                in_time,
-                out_time
-            FROM paired_sessions
-        ),
-
-        daily_slices AS (
-            SELECT
-                badge_id,
-                date_id,
-                GREATEST(in_time, date_id::timestamp) AS day_in,
-                LEAST(out_time, date_id::timestamp + INTERVAL '1 day') AS day_out
-            FROM expanded_days
-        ),
-
-        daily_sessions AS (
-            SELECT
-                badge_id,
-                date_id,
-                day_in,
-                day_out,
-                EXTRACT(EPOCH FROM (day_out - day_in)) / 3600 AS session_hours
-            FROM daily_slices
-            WHERE day_out > day_in
-        ),
-
-        daily_aggregates AS (
-            SELECT
-                badge_id,
-                date_id,
-                SUM(session_hours)                    AS total_hours,
-                COUNT(*)                              AS total_sessions,
-                MIN(day_in)                           AS first_in_time,
-                MAX(day_out)                          AS last_out_time,
-                AVG(session_hours)                    AS avg_session_hours
-            FROM daily_sessions
-            GROUP BY badge_id, date_id
+              AND date_trunc('day', event_time) <= '{{ ds }}'::date
+              AND date_trunc('day', next_event_time) >= '{{ ds }}'::date
         )
 
         INSERT INTO fact_attendance_daily (
@@ -133,14 +128,18 @@ with DAG(
         SELECT
             badge_id,
             date_id,
-            total_hours,
-            total_sessions,
-            first_in_time,
-            last_out_time,
-            avg_session_hours
-        FROM daily_aggregates
-        WHERE date_id = '{{ ds }}'::date;
+            SUM(EXTRACT(EPOCH FROM session_duration) / 3600) AS total_hours,
+            COUNT(*)                                        AS total_sessions,
+            MIN(effective_in)                               AS first_in_time,
+            MAX(effective_out)                              AS last_out_time,
+            AVG(EXTRACT(EPOCH FROM session_duration) / 3600) AS avg_session_hours
+        FROM daily_calculation
+        WHERE session_duration > INTERVAL '0 seconds'
+        GROUP BY badge_id, date_id;
         """
     )
 
-    create_fact_table >> calculate_daily_attendance
+    # ------------------------------------------------------------
+    # DAG order
+    # ------------------------------------------------------------
+    wait_for_src_dag >> create_fact_table >> calculate_daily_attendance

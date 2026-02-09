@@ -10,9 +10,9 @@ with DAG(
     tags=["source", "badge"]
 ) as dag:
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     # Create source table
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     create_badge_events_table = PostgresOperator(
         task_id="create_badge_events_table",
         postgres_conn_id="postgres_default",
@@ -26,9 +26,9 @@ with DAG(
         """
     )
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     # Insert STUDENT badge events
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     insert_student_events = PostgresOperator(
         task_id="insert_student_events",
         postgres_conn_id="postgres_default",
@@ -37,18 +37,13 @@ with DAG(
             SELECT
                 EXTRACT(DOW FROM '{{ ds }}'::date) AS dow,
                 CASE
-                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 0
-                        THEN 1.0                              -- Sunday holiday
-                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 6
-                        THEN 0.40 + random() * 0.20           -- Saturday
-                    ELSE
-                        0.03 + random() * 0.10                -- Weekday
+                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 0 THEN 1.0
+                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 6 THEN 0.40 + random() * 0.20
+                    ELSE 0.03 + random() * 0.10
                 END AS absentee_rate,
                 CASE
-                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) IN (0,6)
-                        THEN 0.10
-                    ELSE
-                        0.25
+                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) IN (0,6) THEN 0.10
+                    ELSE 0.25
                 END AS revisit_prob
         )
         INSERT INTO src_badge_events (badge_id, event_time, event_type)
@@ -59,11 +54,7 @@ with DAG(
         FROM students s
         CROSS JOIN day_context d
         CROSS JOIN LATERAL (
-            SELECT
-                CASE
-                    WHEN random() < d.revisit_prob THEN 2
-                    ELSE 1
-                END AS visits
+            SELECT CASE WHEN random() < d.revisit_prob THEN 2 ELSE 1 END AS visits
         ) v
         CROSS JOIN LATERAL (
             SELECT
@@ -86,9 +77,9 @@ with DAG(
         """
     )
 
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     # Insert TEACHER badge events
-    # ------------------------------------------------------------------
+    # ------------------------------------------------------------
     insert_teacher_events = PostgresOperator(
         task_id="insert_teacher_events",
         postgres_conn_id="postgres_default",
@@ -97,12 +88,9 @@ with DAG(
             SELECT
                 EXTRACT(DOW FROM '{{ ds }}'::date) AS dow,
                 CASE
-                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 0
-                        THEN 1.0                              -- Sunday holiday
-                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 6
-                        THEN 0.25 + random() * 0.15           -- Saturday
-                    ELSE
-                        0.01 + random() * 0.04                -- Weekday
+                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 0 THEN 1.0
+                    WHEN EXTRACT(DOW FROM '{{ ds }}'::date) = 6 THEN 0.25 + random() * 0.15
+                    ELSE 0.01 + random() * 0.04
                 END AS absentee_rate
         )
         INSERT INTO src_badge_events (badge_id, event_time, event_type)
@@ -132,7 +120,4 @@ with DAG(
         """
     )
 
-    # ------------------------------------------------------------------
-    # DAG order
-    # ------------------------------------------------------------------
     create_badge_events_table >> insert_student_events >> insert_teacher_events

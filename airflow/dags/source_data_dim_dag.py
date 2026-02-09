@@ -5,8 +5,8 @@ from datetime import datetime
 with DAG(
     dag_id="source_data_dim_dag",
     start_date=datetime(2026, 1, 1),
-    schedule_interval=None,   # manual
-    catchup=False,
+    schedule_interval=None,   
+    catchup=False,            
     tags=["source", "dimension"]
 ) as dag:
 
