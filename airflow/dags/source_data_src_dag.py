@@ -73,7 +73,8 @@ with DAG(
             SELECT p.out_time, 'OUT'
         ) ev
         WHERE d.dow <> 0
-          AND random() > d.absentee_rate;
+          AND random() > d.absentee_rate
+        ORDER BY s.badge_id, ev.event_time, ev.event_type;
         """
     )
 
@@ -116,7 +117,8 @@ with DAG(
             SELECT p.out_time, 'OUT'
         ) ev
         WHERE d.dow <> 0
-          AND random() > d.absentee_rate;
+          AND random() > d.absentee_rate
+        ORDER BY t.badge_id, ev.event_time, ev.event_type;
         """
     )
 
