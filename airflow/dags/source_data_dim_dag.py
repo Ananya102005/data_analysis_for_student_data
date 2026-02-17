@@ -5,8 +5,8 @@ from datetime import datetime
 with DAG(
     dag_id="source_data_dim_dag",
     start_date=datetime(2026, 1, 1),
-    schedule_interval=None,   
-    catchup=False,            
+    schedule_interval=None,
+    catchup=False,
     tags=["source", "dimension"]
 ) as dag:
 
@@ -28,6 +28,47 @@ with DAG(
             name TEXT,
             department TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS dim_date (
+            date_id DATE PRIMARY KEY,
+            year INTEGER,
+            month INTEGER,
+            day INTEGER,
+            day_of_week INTEGER,
+            week_of_year INTEGER,
+            is_weekend BOOLEAN,
+            is_holiday BOOLEAN DEFAULT FALSE
+        );
+        """
+    )
+
+    load_dim_date = PostgresOperator(
+        task_id="load_dim_date",
+        postgres_conn_id="postgres_default",
+        sql="""
+        INSERT INTO dim_date (
+            date_id,
+            year,
+            month,
+            day,
+            day_of_week,
+            week_of_year,
+            is_weekend
+        )
+        SELECT
+            date_val::date,
+            EXTRACT(YEAR FROM date_val)::INTEGER,
+            EXTRACT(MONTH FROM date_val)::INTEGER,
+            EXTRACT(DAY FROM date_val)::INTEGER,
+            EXTRACT(DOW FROM date_val)::INTEGER,
+            EXTRACT(WEEK FROM date_val)::INTEGER,
+            EXTRACT(DOW FROM date_val) IN (0, 6)
+        FROM generate_series(
+            '2026-01-01'::date,
+            '2027-12-31'::date,
+            '1 day'::interval
+        ) date_val
+        ON CONFLICT (date_id) DO NOTHING;
         """
     )
 
@@ -74,4 +115,4 @@ with DAG(
         """
     )
 
-    create_dim_tables >> load_students >> load_teachers
+    create_dim_tables >> load_dim_date >> [load_students, load_teachers]
